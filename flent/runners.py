@@ -1502,6 +1502,96 @@ class IperfCsvRunner(ProcessRunner):
         raise RunnerCheckError("No suitable Iperf binary found.")
 
 
+class Iperf3JsonRunner(ProcessRunner):
+    """Runner for iperf3 json output (-J). """
+
+    transformed_metadata = ('MEAN_VALUE',)
+
+    def __init__(self, host, interval, length, ip_version, local_bind=None,
+                 no_delay=False, udp=False, bw=None, marking=None,
+                 reverse=None, port=5201, bufferlen=None, **kwargs):
+        self.host = host
+        self.interval = interval
+        self.length = length
+        self.ip_version = ip_version
+        self.local_bind = local_bind
+        self.no_delay = no_delay
+        self.udp = udp
+        self.bw = bw
+        self.marking = marking
+        self.reverse = reverse
+        self.port = port
+        self.bufferlen = bufferlen
+        super(Iperf3JsonRunner, self).__init__(**kwargs)
+
+    def parse(self, output, error=""):
+        result = []
+        raw_values = []
+        data = json.loads(output)
+        base = data["start"]["timestamp"]["timesecs"]
+        
+        for sample in data["intervals"]:
+            timestamp = base + sample["streams"][0]["end"]
+            val = transformers.bits_to_mbits(sample["streams"][0]["bits_per_second"])
+            result.append([timestamp, val])
+            raw_values.append({'t': timestamp, 'val': val})
+
+        self.raw_values = raw_values
+        try:
+            if self.udp:
+                self.metadata['MEAN_VALUE'] = transformers.bits_to_mbits(data["end"]["sum"]["bits_per_second"])
+            else:
+                self.metadata['MEAN_VALUE'] = transformers.bits_to_mbits(data["end"]["sum_sent"]["bits_per_second"])
+        except (ValueError, IndexError):
+            pass
+        return result
+
+    def check(self):
+        local_bind = self.local_bind
+        if not self.local_bind and self.settings.LOCAL_BIND:
+            local_bind = self.settings.LOCAL_BIND[0]
+
+        self.command = self.find_binary(self.host, self.interval, self.length,
+                                        self.ip_version,
+                                        local_bind=local_bind,
+                                        no_delay=self.no_delay,
+                                        udp=self.udp,
+                                        bw=self.bw,
+                                        marking=self.marking,
+                                        reverse=self.reverse,
+                                        port=self.port,
+                                        bufferlen=self.bufferlen)
+        super(Iperf3JsonRunner, self).check()
+
+    def find_binary(self, host, interval, length, ip_version, local_bind=None,
+                    no_delay=False, udp=False, bw=None, marking=None,
+                    reverse=None, port=5201, bufferlen=None):
+        iperf3 = util.which('iperf3')
+
+        if iperf3 is not None:
+            return "{binary} --json --format m " \
+                "--client {host} --port {port} --time {length} --interval {interval} " \
+                "{local_bind} {no_delay} {udp} {bw} {marking} {ip6} {reverse} {bufferlen}".format(
+                    host=host,
+                    port=port,
+                    binary=iperf3,
+                    length=length,
+                    interval=interval,
+                    # --help output is wrong
+                    ip6="--ipv6_domain" if ip_version == 6 else "",
+                    local_bind="--bind {0}".format(
+                        local_bind) if local_bind else "",
+                    no_delay="--nodelay" if no_delay else "",
+                    marking=self.parse_marking(marking, "--tos {}"),
+                    udp="--udp" if udp else "",
+                    bw="--bandwidth {}".format(bw) if bw else "",
+                    reverse="--reverse" if reverse else "",
+                    bufferlen="--len {}".format(bufferlen) if bufferlen else "")
+
+
+        raise RunnerCheckError("No suitable Iperf3 binary found.")
+
+
 class IrttRunner(ProcessRunner):
 
     _irtt = {}
