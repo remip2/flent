@@ -10,16 +10,17 @@ DATA_SETS['VoIP']                 = {'length': VOIP_LENGTH,
                                      'runner': 'voip'}
 DATA_SETS['VoIP::bitrate']        = {'units': 'Kbits/s', 'runner': 'null'}
 DATA_SETS['VoIP::delay']          = {'units': 'ms', 'runner': 'null'}
+DATA_SETS['VoIP::rtt']            = {'units': 'ms', 'runner': 'null'}
 DATA_SETS['VoIP::jitter']         = {'units': 'ms', 'runner': 'null'}
 DATA_SETS['VoIP::loss']           = {'units': 'count', 'runner': 'null'}
 DATA_SETS['VoIP::induced_delay']  = {'units': 'ms', 'runner': 'diff_min', 'apply_to': ['VoIP::delay']}
 
 
-PLOTS['voip_delay']              = {'description': 'VoIP delay and jitter',
+PLOTS['voip_delay']              = {'description': 'VoIP RTT and jitter',
                                     'type': 'timeseries',
-                                    'axis_labels': ['One-way delay (ms)'],
-                                    'series': [{'data': 'VoIP::delay',
-                                                'label': 'VoIP delay'},
+                                    'axis_labels': ['delay (ms)'],
+                                    'series': [{'data': 'VoIP::rtt',
+                                                'label': 'VoIP RTT'},
                                                {'data': 'VoIP::jitter',
                                                 'label': 'VoIP jitter',
                                                 'color': 'green'}
