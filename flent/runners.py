@@ -2598,3 +2598,76 @@ class FairnessRunner(ComputingRunner):
         if not valsum:
             return None
         return math.fsum(values)**2 / (len(values) * valsum)
+
+
+class HttpPerfRunner(ProcessRunner):
+    """Runner for http-perf."""
+    httpperf = {}
+
+    def __init__(self, host, length, protocol='http', port=80, size=1024,
+                 direction='download', multi_results=True, **kwargs):
+        self.host = host
+        self.protocol = protocol
+        self.port = port
+        self.length = length
+        self.size = size
+        self.multi_results = multi_results
+        self.direction = direction
+        super(HttpPerfRunner, self).__init__(**kwargs)
+
+    def parse(self, output, error=""):
+        result = {'upload': [], 'download': [], 'transaction': [], 'responsetime': []}
+        raw_values = []
+        lines = output.strip().splitlines()
+
+        for line in lines:
+            if line.startswith('{'):
+                try:
+                    data = json.loads(line)
+            
+                    timestamp = data["timestamp"]
+                    interval = data["interval"]
+                    download = data["bytesin"] * 8 / 1000000.0 / interval # convert to Mbit/s
+                    upload = data["bytesout"] * 8 / 1000000.0 / interval # convert to Mbit/s
+                    result['upload'].append([timestamp, upload])
+                    result['download'].append([timestamp, download])
+                    result['transaction'].append([timestamp, data["transactions"]])
+                    result['responsetime'].append([timestamp, data["responsetime"]*1000.0])
+                    raw_values.append({'t': timestamp, 'transactions': data["transactions"],
+                                   'bytesout': data["bytesout"], 'bytesin': data["bytesin"],
+                                   'responsetime': data["responsetime"]})
+                except Exception as e:
+                    logger.warning("Bad json: {}\n{}".format(str(e), line))
+                    continue
+        self.raw_values = raw_values
+
+        if self.multi_results:
+            return result
+        return result['download']
+
+    def check(self):
+        args = self.runner_args.copy()
+
+        args.setdefault('interval', self.settings.STEP_SIZE)
+        
+        if not self.httpperf:
+            httpperf = util.which('/home/user/http-perf/http-perf.py', fail=RunnerCheckError)
+
+            self.httpperf['executable'] = httpperf
+
+        args['binary'] = self.httpperf['executable']
+        args['host'] = self.host
+        args['port'] = self.port
+        args['protocol'] = self.protocol
+        args['length'] = self.length
+        args['size'] = self.size
+        args['direction'] = self.direction
+
+        self.command = "{binary} --interval {interval:.2f} " \
+                       "--host {host} --port {port} " \
+                       "--direction {direction} " \
+                       "--length {length:d} --size {size} " \
+                       "--protocol {protocol}".format(**args)
+
+        super(HttpPerfRunner, self).check()
+
