@@ -407,7 +407,7 @@ class ProcessRunner(RunnerBase, threading.Thread):
         if self.command is None:
             raise RunnerCheckError("No command set for %s" %
                                    self.__class__.__name__)
-        self.args = shlex.split(self.command)
+
         self.metadata['COMMAND'] = self.command
         if self.units:
             self.metadata['UNITS'] = self.units
@@ -422,6 +422,8 @@ class ProcessRunner(RunnerBase, threading.Thread):
                         self.__class__.__name__, self.idx))
             self.command = "ssh %s '%s'" % (self.remote_host, self.command)
             self.metadata['REMOTE_HOST'] = self.remote_host
+
+        self.args = shlex.split(self.command)
 
     def handle_usr2(self, signal, frame):
         if self.start_event is not None:
@@ -1529,7 +1531,7 @@ class Iperf3JsonRunner(ProcessRunner):
         raw_values = []
         data = json.loads(output)
         base = data["start"]["timestamp"]["timesecs"]
-        
+
         for sample in data["intervals"]:
             timestamp = base + sample["streams"][0]["end"]
             val = transformers.bits_to_mbits(sample["streams"][0]["bits_per_second"])
@@ -2613,6 +2615,7 @@ class HttpPerfRunner(ProcessRunner):
         self.size = size
         self.multi_results = multi_results
         self.direction = direction
+
         super(HttpPerfRunner, self).__init__(**kwargs)
 
     def parse(self, output, error=""):
@@ -2624,7 +2627,7 @@ class HttpPerfRunner(ProcessRunner):
             if line.startswith('{'):
                 try:
                     data = json.loads(line)
-            
+
                     timestamp = data["timestamp"]
                     interval = data["interval"]
                     download = data["bytesin"] * 8 / 1000000.0 / interval # convert to Mbit/s
@@ -2649,7 +2652,7 @@ class HttpPerfRunner(ProcessRunner):
         args = self.runner_args.copy()
 
         args.setdefault('interval', self.settings.STEP_SIZE)
-        
+
         if not self.httpperf:
             httpperf = util.which('/home/user/http-perf/http-perf.py', fail=RunnerCheckError)
 
