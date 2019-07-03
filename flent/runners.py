@@ -422,7 +422,6 @@ class ProcessRunner(RunnerBase, threading.Thread):
                         self.__class__.__name__, self.idx))
             self.command = "ssh %s '%s'" % (self.remote_host, self.command)
             self.metadata['REMOTE_HOST'] = self.remote_host
-
         self.args = shlex.split(self.command)
 
     def handle_usr2(self, signal, frame):
@@ -2673,4 +2672,88 @@ class HttpPerfRunner(ProcessRunner):
                        "--protocol {protocol}".format(**args)
 
         super(HttpPerfRunner, self).check()
+
+class IfPerfRunner(ProcessRunner):
+    """Runner for if-perf."""
+    ifperf = {}
+    re_md = re.compile(r"([A-Z_]*)=(.*)")
+
+    def __init__(self, length, interface, srcip=None, dstip=None, srcport=None, dstport=None,
+                 marking=None, multi_results=True, **kwargs):
+        self.length = length
+        self.srcip = srcip
+        self.dstip = dstip
+        self.srcport = srcport
+        self.dstport = dstport
+        self.marking = marking
+        self.interface = interface
+        self.multi_results = multi_results
+
+        super(IfPerfRunner, self).__init__(**kwargs)
+
+    def parse(self, output, error=""):
+        result = {'packets': [], 'bandwidth': []}
+        raw_values = []
+        lines = output.strip().splitlines()
+
+        for line in lines:
+            if line.startswith('{'):
+                try:
+                    data = json.loads(line)
+
+                    timestamp = data["timestamp"]
+                    interval = data["interval"]
+                    packets = data["packets"] / interval # packets/s
+                    bandwidth = data["bytes"] * 8 / 1000000.0 / interval # convert to Mbit/s
+                    result['packets'].append([timestamp, packets])
+                    result['bandwidth'].append([timestamp, bandwidth])
+                    raw_values.append({'t': timestamp, 'packets': packets, 'bytes': data["bytes"]})
+                except Exception as e:
+                    logger.warning("Bad json: {}\n{}".format(str(e), line))
+                    continue
+            else:
+                # metadata=value ?
+                res = self.re_md.search(line)
+                if res:
+                    self.metadata[res.group(1)] = res.group(2)
+        self.raw_values = raw_values
+
+        if self.multi_results:
+            return result
+        return result['bandwidth']
+
+    def check(self):
+        args = self.runner_args.copy()
+
+        args.setdefault('interval', self.settings.STEP_SIZE)
+
+        if not self.ifperf:
+            ifperf = util.which('/home/user/if-perf/if-perf.py', fail=RunnerCheckError)
+
+            self.ifperf['executable'] = ifperf
+
+        args['binary'] = self.ifperf['executable']
+        args['length'] = self.length
+        args['srcip'] = self.srcip
+        args['dstip'] = self.dstip
+        args['srcport'] = self.srcport
+        args['dstport'] = self.dstport
+        args['marking'] = self.marking
+        args['interface'] = self.interface
+
+        self.command = "sudo {binary} --interval {interval:.2f} " \
+                       "--length {length:d} " \
+                       "--interface {interface} ".format(**args)
+        if args['srcip']:
+            self.command += "--src {srcip} ".format(**args)
+        if args['dstip']:
+            self.command += "--dst {dstip} ".format(**args)
+        if args['srcport']:
+            self.command += "--srcport {srcport} ".format(**args)
+        if args['dstport']:
+            self.command += "--dstport {dstport} ".format(**args)
+        if args['marking']:
+            self.command += "--tos {}".format(int(MARKING_MAP[args['marking'].upper()]))
+
+        super(IfPerfRunner, self).check()
 
