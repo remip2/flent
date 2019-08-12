@@ -2728,7 +2728,7 @@ class IfPerfRunner(ProcessRunner):
         args.setdefault('interval', self.settings.STEP_SIZE)
 
         if not self.ifperf:
-            ifperf = util.which('/home/user/if-perf/if-perf.py', fail=RunnerCheckError)
+            ifperf = util.which('/home/user/if-perf/if-perf', fail=RunnerCheckError)
 
             self.ifperf['executable'] = ifperf
 
