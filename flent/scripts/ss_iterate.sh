@@ -42,7 +42,7 @@ fi
 
 command_string=$(cat <<EOF
 for i in \$(seq $count); do
-    ss -t -i -p -n state connected "dst $target $filter"
+    ss -t -i -p -n state connected 'dst $target $filter'
     date '+Time: %s.%N';
     echo "---";
     sleep $interval || exit 1;
@@ -53,5 +53,5 @@ EOF
 if [[ "$host" == "localhost" ]]; then
     eval "$command_string"
 else
-    echo $command_string | ssh $host sh
+    echo "$command_string" | ssh $host sh
 fi

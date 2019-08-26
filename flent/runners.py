@@ -1002,6 +1002,7 @@ class NetperfDemoRunner(ProcessRunner):
         args['buffer'] = self.netperf['buffer']
         args['test'] = self.test
         args['host'] = self.host
+        args['ports'] = ""
 
         if self.bytes:
             args['length'] = -self.bytes
@@ -1028,6 +1029,9 @@ class NetperfDemoRunner(ProcessRunner):
             args['format'] = "-f m"
             self.units = 'Mbits/s'
 
+            if 'srcport' in args and 'dstport' in args:
+                args['ports'] = "-P {},{}".format(args['srcport'], args['dstport'])
+
             if args['test'] == 'TCP_STREAM' and self.settings.SOCKET_STATS:
                 self.add_child(SsRunner,
                                exclude_ports=(args['control_port'],),
@@ -1039,6 +1043,29 @@ class NetperfDemoRunner(ProcessRunner):
                                target=self.host,
                                ip_version=args['ip_version'])
 
+            if args['test'] == 'TCP_MAERTS' and self.settings.SOCKET_STATS:
+
+                #get localip
+                cmd = "ip route get {}".format(args["control_host"])
+                (res1, output) = subprocess.getstatusoutput(cmd)
+                res2 = re.search(r"src (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", output)
+                if res1 == 0 and res2:
+                    localip = res2.group(1)
+                    self.add_child(SsRunner,
+                                exclude_ports=(args['control_port'],),
+                                delay=self.delay,
+                                remote_host=None,
+                                host=args["control_host"],
+                                interval=args['interval'],
+                                length=self.length,
+                                target=localip,
+                                ip_version=args['ip_version'],
+                                remote=True,
+                                srcport=args['srcport'],
+                                dstport=args['dstport'])
+                else:
+                    logger.warning("Can't get local ip to reach {}".format(args["control_host"]))
+
         elif self.test == 'UDP_RR':
             self.units = 'ms'
 
@@ -1047,7 +1074,7 @@ class NetperfDemoRunner(ProcessRunner):
                        "-t {test} -l {length:d} {buffer} {format} " \
                        "{control_local_bind} {extra_args} -- " \
                        "{socket_timeout} {local_bind} -H {host} -k {output_vars} " \
-                       "{cong_control} {extra_test_args}".format(**args)
+                       "{cong_control} {ports} {extra_test_args}".format(**args)
 
         super(NetperfDemoRunner, self).check()
 
@@ -1849,7 +1876,7 @@ class SsRunner(ProcessRunner):
     ss_states_re = re.compile(r"|".join(ss_states))
 
     def __init__(self, exclude_ports, ip_version, host, interval,
-                 length, target, **kwargs):
+                 length, target, remote=False, srcport=None, dstport=None, **kwargs):
         self.exclude_ports = exclude_ports
         self.ip_version = ip_version
         self.host = host
@@ -1857,6 +1884,9 @@ class SsRunner(ProcessRunner):
         self.length = length
         self.target = target
         self._dup_key = None
+        self.remote = remote
+        self.srcport = srcport
+        self.dstport = dstport
         super(SsRunner, self).__init__(**kwargs)
 
     def fork(self):
@@ -1914,6 +1944,34 @@ class SsRunner(ProcessRunner):
 
         return sub_part[0]
 
+    def filter_ports(self, part):
+        sub_part = []
+        sub_parts = self.ss_states_re.split(part)
+        sub_parts = [sp for sp in sub_parts if sp.strip()
+                     and not self.ss_header_re.search(sp)]
+
+        for sp in sub_parts:
+
+            f_ports = self.ports_ipv4_re.search(sp)
+            if None is f_ports:
+                f_ports = self.ports_ipv6_re.search(sp)
+
+            if None is f_ports:
+                continue
+                #raise ParseError()
+
+            srcp = int(f_ports.group('src_p').split(":")[-1])
+            dstp = int(f_ports.group('dst_p').split(":")[-1])
+
+            # ss executed on the server, reverse src/dst
+            if self.srcport == int(dstp) and self.dstport == int(srcp):
+                sub_part.append(sp)
+
+        if 1 != len(sub_part):
+            raise ParseError()
+
+        return sub_part[0]
+
     def parse_val(self, val):
         if val.endswith("Mbps"):
             return float(val[:-4])
@@ -1924,7 +1982,10 @@ class SsRunner(ProcessRunner):
         return float(val)
 
     def parse_part(self, part):
-        sub_part = self.filter_np_parent(part)
+        if self.srcport and self.dstport:
+            sub_part = self.filter_ports(part)
+        else:
+            sub_part = self.filter_np_parent(part)
 
         timestamp = self.time_re.search(part)
         if timestamp is None:
@@ -2679,7 +2740,7 @@ class IfPerfRunner(ProcessRunner):
     re_md = re.compile(r"([A-Z_]*)=(.*)")
 
     def __init__(self, length, interface, srcip=None, dstip=None, srcport=None, dstport=None,
-                 marking=None, multi_results=True, **kwargs):
+                 marking=None, ack=None, multi_results=True, **kwargs):
         self.length = length
         self.srcip = srcip
         self.dstip = dstip
@@ -2688,6 +2749,7 @@ class IfPerfRunner(ProcessRunner):
         self.marking = marking
         self.interface = interface
         self.multi_results = multi_results
+        self.ack = ack
 
         super(IfPerfRunner, self).__init__(**kwargs)
 
@@ -2740,6 +2802,8 @@ class IfPerfRunner(ProcessRunner):
         args['dstport'] = self.dstport
         args['marking'] = self.marking
         args['interface'] = self.interface
+        args['ackonly'] = (self.ack == True)
+        args['noack'] =  (self.ack == False)
 
         self.command = "sudo {binary} --interval {interval:.2f} " \
                        "--length {length:d} " \
@@ -2753,7 +2817,11 @@ class IfPerfRunner(ProcessRunner):
         if args['dstport']:
             self.command += "--dstport {dstport} ".format(**args)
         if args['marking']:
-            self.command += "--tos {}".format(int(MARKING_MAP[args['marking'].upper()]))
+            self.command += "--tos {} ".format(int(MARKING_MAP[args['marking'].upper()]))
+        if args['ackonly']:
+            self.command += "--ackonly "
+        if args['noack']:
+            self.command += "--noack "
 
         super(IfPerfRunner, self).check()
 
